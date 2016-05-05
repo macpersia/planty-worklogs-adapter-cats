@@ -27,8 +27,9 @@ import scala.concurrent.{Await, ExecutionContext}
 case class ConnectionConfig(
                              baseUri: URI,
                              username: String,
-                             password: String ) {
-
+                             password: String,
+                             customerId: String,
+                             customerKey: String) {
   val baseUriWithSlash = {
     val baseUriStr = baseUri.toString
     if (baseUriStr.endsWith("/")) baseUriStr
@@ -94,11 +95,11 @@ class CatsWorklogReporter(connConfig: ConnectionConfig, filter: WorklogFilter)
                       "Accept-Language" -> "en",
                       "User" -> connConfig.username,
                       "Password" -> connConfig.password,
-                      "Consumer-Id" -> "CATSmobile-client",
                       "Content-Type" -> "application/json; charset=utf-8",
                       "Accept" -> "application/json",
                       "Timestamp" -> nonce.format(TS_FORMATTER),
-                      "Consumer-Key" -> "C736938F-02FC-4804-ACFE-00E20E21D198",
+                      "Consumer-Id" -> connConfig.customerId,
+                      "Consumer-Key" -> connConfig.customerKey,
                       "Version" -> "1.0"
                     ).withQueryString(
                       "_" -> s"${nonce.toEpochSecond}"
@@ -118,11 +119,11 @@ class CatsWorklogReporter(connConfig: ConnectionConfig, filter: WorklogFilter)
                     .withHeaders(
                       "Accept-Language" -> "en",
                       "sid" -> sessionId,
-                      "Consumer-Id" -> "CATSmobile-client",
                       "Content-Type" -> "application/json; charset=utf-8",
                       "Accept" -> "application/json",
                       "Timestamp" -> nonce.format(TS_FORMATTER),
-                      "Consumer-Key" -> "C736938F-02FC-4804-ACFE-00E20E21D198",
+                      "Consumer-Id" -> connConfig.customerId,
+                      "Consumer-Key" -> connConfig.customerKey,
                       "Version" -> "1.0"
                     ).withQueryString(
                       "from" -> fromDateFormatted,
