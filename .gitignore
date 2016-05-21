@@ -9,3 +9,5 @@ target
 /bin
 JIRA-worklogs.csv
 .cache-main
+.ensime
+.ensime_cache

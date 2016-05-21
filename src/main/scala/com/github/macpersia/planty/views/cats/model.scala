@@ -4,7 +4,7 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
 import play.api.libs.functional.syntax._
-import play.api.libs.json.{JsPath, JsString, Reads, Writes}
+import play.api.libs.json._
 
 import scala.collection.immutable.Seq
 
@@ -53,18 +53,20 @@ package object model {
       (dtString => LocalDate.parse(dtString, catsDFormatter1))
   )
 
-  val readsLocalDateForCats2 = Reads[LocalDate] ( js =>
-    js.validate[String].map[LocalDate]
-      (dtString => LocalDate.parse(dtString, catsDFormatter2))
-  )
-
   val writesLocalDateForCats1 = Writes[LocalDate] ( date =>
     JsString(catsDFormatter1.format(date))
+  )
+
+  val readsLocalDateForCats2 = Reads[LocalDate] ( js =>
+  js.validate[String].map[LocalDate]
+  (dtString => LocalDate.parse(dtString, catsDFormatter2))
   )
 
   val writesLocalDateForCats2 = Writes[LocalDate] ( date =>
     JsString(catsDFormatter2.format(date))
   )
+
+//  import play.api.libs.json._
 
   implicit val catsUserReads: Reads[CatsUser] = (
     (JsPath \ "baseUrl").readNullable[String] and
@@ -73,6 +75,14 @@ package object model {
     (JsPath \ "defaultActivity").readNullable[String] and
     (JsPath \ "meta" \ "sid").readNullable[String]
   )(CatsUser.apply _)
+
+//  implicit val catsUserWrites: Writes[CatsUser] = (
+//    (JsPath \ "baseUrl").writeNullable[String] and
+//    (JsPath \ "name").write[String] and
+//    (JsPath \ "prename").write[String] and
+//    (JsPath \ "defaultActivity").writeNullable[String] and
+//    (JsPath \ "meta" \ "sid").writeNullable[String]
+//  )(unlift(CatsUser.unapply))
 
   implicit val catsWorklogReads: Reads[CatsWorklog] = (
     (JsPath \ "baseUrl").readNullable[String] and
@@ -100,6 +110,32 @@ package object model {
     (JsPath \ "workingHours").read[Double]
   )(CatsWorklog.apply _)
 
+//  implicit val catsWorklogWrites: Writes[CatsWorklog] = (
+//    (JsPath \ "baseUrl").writeNullable[String] and
+//    (JsPath \ "id").write[String] and
+//    (JsPath \ "date").write(writesLocalDateForCats1) and
+//    (JsPath \ "orderid").write[String] and
+//    (JsPath \ "orderhref").write[String] and
+//    (JsPath \ "ordershorttext").writeNullable[String] and
+//    (JsPath \ "activityid").write[String] and
+//    (JsPath \ "activityhref").writeNullable[String] and
+//    (JsPath \ "activityshorttext").writeNullable[String] and
+//    (JsPath \ "suborderid").writeNullable[String] and
+//    (JsPath \ "suborderhref").writeNullable[String] and
+//    (JsPath \ "subordershorttext").writeNullable[String] and
+//    (JsPath \ "comment").write[String] and
+//    // (JsPath \ "additionalcomment").writeNullable[String] and
+//    (JsPath \ "creationDate").write(writesLocalDateForCats2) and
+//    (JsPath \ "modifiedDate").write(writesLocalDateForCats2) and
+//    // (JsPath \ "extsystem").writeNullable[String] and
+//    // (JsPath \ "standarddescriptionfrontsystem").writeNullable[String] and
+//    // (JsPath \ "standarddescriptionhref").writeNullable[String] and
+//    // (JsPath \ "standarddescriptionid").writeNullable[String] and
+//    // (JsPath \ "standarddescriptionshorttext").writeNullable[String] and
+//    // (JsPath \ "trackedtimeStatus").writeNullable[String] and
+//    (JsPath \ "workingHours").write[Double]
+//  )(unlift(CatsWorklog.unapply))
+
   implicit val searchResultReads: Reads[CatsSearchResult] = (
     (JsPath \ "baseUrl").readNullable[String] and
     (JsPath \ "meta" \ "sid").read[String] and
@@ -107,44 +143,10 @@ package object model {
     (JsPath \ "count").read[Int]
   )(CatsSearchResult.apply _)
 
-  implicit val catsUserWrites: Writes[CatsUser] = (
-    (JsPath \ "baseUrl").writeNullable[String] and
-    (JsPath \ "name").write[String] and
-    (JsPath \ "prename").write[String] and
-    (JsPath \ "defaultActivity").writeNullable[String] and
-    (JsPath \ "meta" \ "sid").writeNullable[String]
-  )(unlift(CatsUser.unapply))
-
-  implicit val catsWorklogWrites: Writes[CatsWorklog] = (
-    (JsPath \ "baseUrl").writeNullable[String] and
-    (JsPath \ "id").write[String] and
-    (JsPath \ "date").write(writesLocalDateForCats1) and
-    (JsPath \ "orderid").write[String] and
-    (JsPath \ "orderhref").write[String] and
-    (JsPath \ "ordershorttext").writeNullable[String] and
-    (JsPath \ "activityid").write[String] and
-    (JsPath \ "activityhref").writeNullable[String] and
-    (JsPath \ "activityshorttext").writeNullable[String] and
-    (JsPath \ "suborderid").writeNullable[String] and
-    (JsPath \ "suborderhref").writeNullable[String] and
-    (JsPath \ "subordershorttext").writeNullable[String] and
-    (JsPath \ "comment").write[String] and
-    // (JsPath \ "additionalcomment").writeNullable[String] and
-    (JsPath \ "creationDate").write(writesLocalDateForCats2) and
-    (JsPath \ "modifiedDate").write(writesLocalDateForCats2) and
-    // (JsPath \ "extsystem").writeNullable[String] and
-    // (JsPath \ "standarddescriptionfrontsystem").writeNullable[String] and
-    // (JsPath \ "standarddescriptionhref").writeNullable[String] and
-    // (JsPath \ "standarddescriptionid").writeNullable[String] and
-    // (JsPath \ "standarddescriptionshorttext").writeNullable[String] and
-    // (JsPath \ "trackedtimeStatus").writeNullable[String] and
-    (JsPath \ "workingHours").write[Double]
-  )(unlift(CatsWorklog.unapply))
-
-  implicit val searchResultWrites: Writes[CatsSearchResult] = (
-    (JsPath \ "baseUrl").writeNullable[String] and
-    (JsPath \ "meta" \ "sid").write[String] and
-    (JsPath \ "times").write[Seq[CatsWorklog]] and
-    (JsPath \ "count").write[Int]
-  )(unlift(CatsSearchResult.unapply))
+//  implicit val searchResultWrites: Writes[CatsSearchResult] = (
+//    (JsPath \ "baseUrl").writeNullable[String] and
+//    (JsPath \ "meta" \ "sid").write[String] and
+//    (JsPath \ "times").write[Seq[CatsWorklog]] and
+//    (JsPath \ "count").write[Int]
+//  )(unlift(CatsSearchResult.unapply))
 }
