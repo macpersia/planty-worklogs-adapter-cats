@@ -10,9 +10,9 @@ import java.util.Collections._
 import java.util._
 import java.util.concurrent.TimeUnit.MINUTES
 
-import com.github.macpersia.planty.views.cats.CatsWorklogReporter.{TS_FORMATTER, DATE_FORMATTER}
+import com.github.macpersia.planty.views.cats.CatsWorklogReporter.{DATE_FORMATTER, TS_FORMATTER}
 import com.github.macpersia.planty.worklogs.WorklogReporting
-import com.github.macpersia.planty.worklogs.model.{WorklogFilter, WorklogEntry}
+import com.github.macpersia.planty.worklogs.model.{WorklogEntry, WorklogFilter}
 import com.typesafe.scalalogging.LazyLogging
 import play.api.libs.json.{JsError, JsSuccess}
 import play.api.libs.ws.WS
@@ -20,7 +20,7 @@ import play.api.libs.ws.ning.NingWSClient
 import resource.managed
 
 import scala.collection.JavaConversions._
-import scala.concurrent.duration.Duration
+import scala.concurrent.duration.{Duration, FiniteDuration}
 import scala.concurrent.{Await, ExecutionContext}
 
 
@@ -89,26 +89,7 @@ class CatsWorklogReporter(connConfig: ConnectionConfig, filter: WorklogFilter)
     val reqTimeout = Duration(1, MINUTES)
 
     val nonce = ZonedDateTime.now()
-    val loginUrl = connConfig.baseUriWithSlash + s"api/users"
-    val loginReq = WS.clientUrl(loginUrl)
-                    .withHeaders(
-                      "Accept-Language" -> "en",
-                      "User" -> connConfig.username,
-                      "Password" -> connConfig.password,
-                      "Content-Type" -> "application/json; charset=utf-8",
-                      "Accept" -> "application/json",
-                      "Timestamp" -> nonce.format(TS_FORMATTER),
-                      "Consumer-Id" -> connConfig.customerId,
-                      "Consumer-Key" -> connConfig.customerKey,
-                      "Version" -> "1.0"
-                    ).withQueryString(
-                      "_" -> s"${nonce.toEpochSecond}"
-                    )
-    val loginFuture = loginReq.get()
-    val loginResp = Await.result(loginFuture, reqTimeout)
-    val loginResult = loginResp.json.validate[CatsUser].get
-    val sessionId = loginResult.sessionId.get
-    logger.debug("Current user's session ID: " + sessionId)
+    val sessionId = login(reqTimeout, nonce)
 
     val dateFormatter: DateTimeFormatter = ofPattern("yyyyMMdd")
     val fromDateFormatted: String = dateFormatter.format(filter.fromDate)
@@ -142,6 +123,30 @@ class CatsWorklogReporter(connConfig: ConnectionConfig, filter: WorklogFilter)
         logger.debug("The body of search response: \n" + searchResp.body)
         throw new RuntimeException("Search Failed!")
     }
+  }
+
+  def login(reqTimeout: FiniteDuration, nonce: ZonedDateTime): String = {
+    val loginUrl = connConfig.baseUriWithSlash + "api/users"
+    val loginReq = WS.clientUrl(loginUrl)
+      .withHeaders(
+        "Accept-Language" -> "en",
+        "User" -> connConfig.username,
+        "Password" -> connConfig.password,
+        "Content-Type" -> "application/json; charset=utf-8",
+        "Accept" -> "application/json",
+        "Timestamp" -> nonce.format(TS_FORMATTER),
+        "Consumer-Id" -> connConfig.customerId,
+        "Consumer-Key" -> connConfig.customerKey,
+        "Version" -> "1.0"
+      ).withQueryString(
+      "_" -> s"${nonce.toEpochSecond}"
+    )
+    val loginFuture = loginReq.get()
+    val loginResp = Await.result(loginFuture, reqTimeout)
+    val loginResult = loginResp.json.validate[CatsUser].get
+    val sessionId = loginResult.sessionId.get
+    logger.debug("Current user's session ID: " + sessionId)
+    sessionId
   }
 
   def toWorklogEntries(worklogsMap: util.Map[CatsWorklog, BasicIssue]): Seq[WorklogEntry] = {
