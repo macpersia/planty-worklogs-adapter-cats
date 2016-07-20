@@ -2,7 +2,7 @@ package com.github.macpersia.planty.views.cats
 
 import java.io.{File, PrintStream}
 import java.net.URI
-import java.time.ZonedDateTime
+import java.time.{LocalDate, ZoneId, ZonedDateTime}
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeFormatter.ofPattern
 import java.util
@@ -20,16 +20,16 @@ import play.api.libs.ws.ning.NingWSClient
 import resource.managed
 
 import scala.collection.JavaConversions._
-import scala.concurrent.duration.{Duration, FiniteDuration}
+import scala.concurrent.duration._
 import scala.concurrent.{Await, ExecutionContext}
-
+import scala.collection.immutable
 
 case class ConnectionConfig(
                              baseUri: URI,
                              username: String,
                              password: String,
-                             customerId: String,
-                             customerKey: String) {
+                             customerId: String = "YOUR-CUSTOMER-ID",
+                             customerKey: String = "YOUR-CUSTOMER-KEY") {
   val baseUriWithSlash = {
     val baseUriStr = baseUri.toString
     if (baseUriStr.endsWith("/")) baseUriStr
@@ -49,7 +49,10 @@ class CatsWorklogReporter(connConfig: ConnectionConfig, filter: WorklogFilter)
   extends LazyLogging with WorklogReporting {
 
   val zoneId = filter.timeZone.toZoneId
+  lazy val cacheManager = CacheManager.instance
   implicit val sslClient = NingWSClient()
+
+  val dateFormatter: DateTimeFormatter = ofPattern("yyyyMMdd")
 
   override def close(): Unit = {
     if (sslClient != null) sslClient.close()
@@ -70,8 +73,8 @@ class CatsWorklogReporter(connConfig: ConnectionConfig, filter: WorklogFilter)
 
   def printWorklogsAsCsv(outputFile: Option[File]) {
     for (csvPrintStream <- managed(
-         if (outputFile.isDefined) new PrintStream(outputFile.get)
-         else Console.out )) {
+      if (outputFile.isDefined) new PrintStream(outputFile.get)
+      else Console.out)) {
       for (entry <- retrieveWorklogs())
         printWorklogAsCsv(entry, csvPrintStream, DATE_FORMATTER)
     }
@@ -91,32 +94,32 @@ class CatsWorklogReporter(connConfig: ConnectionConfig, filter: WorklogFilter)
     val nonce = ZonedDateTime.now()
     val sessionId = login(reqTimeout, nonce)
 
-    val dateFormatter: DateTimeFormatter = ofPattern("yyyyMMdd")
     val fromDateFormatted: String = dateFormatter.format(filter.fromDate)
     val toDateFormatted: String = dateFormatter.format(filter.toDate)
 
     val searchUrl = connConfig.baseUriWithSlash + "api/times"
     val searchReq = WS.clientUrl(searchUrl)
-                    .withHeaders(
-                      "Accept-Language" -> "en",
-                      "sid" -> sessionId,
-                      "Content-Type" -> "application/json; charset=utf-8",
-                      "Accept" -> "application/json",
-                      "Timestamp" -> nonce.format(TS_FORMATTER),
-                      "Consumer-Id" -> connConfig.customerId,
-                      "Consumer-Key" -> connConfig.customerKey,
-                      "Version" -> "1.0"
-                    ).withQueryString(
-                      "from" -> fromDateFormatted,
-                      "to" -> toDateFormatted,
-                      "_" -> s"${nonce.toEpochSecond}"
-                    )
+      .withHeaders(
+        "Accept-Language" -> "en",
+        "sid" -> sessionId,
+        "Content-Type" -> "application/json; charset=utf-8",
+        "Accept" -> "application/json",
+        "Timestamp" -> nonce.format(TS_FORMATTER),
+        "Consumer-Id" -> connConfig.customerId,
+        "Consumer-Key" -> connConfig.customerKey,
+        "Version" -> "1.0"
+      ).withQueryString(
+      "from" -> fromDateFormatted,
+      "to" -> toDateFormatted,
+      "_" -> s"${nonce.toEpochSecond}"
+    )
     val searchFuture = searchReq.get()
     val searchResp = Await.result(searchFuture, reqTimeout)
     logger.debug("The search response JSON: " + searchResp.json)
     searchResp.json.validate[CatsSearchResult] match {
       case JsSuccess(searchResult, path) =>
         val worklogsMap: util.Map[CatsWorklog, BasicIssue] = extractWorklogs(searchResult)
+        cacheManager.updateWorklogs(worklogsMap.keys.to[immutable.Seq])
         return toWorklogEntries(worklogsMap)
       case JsError(errors) =>
         for (e <- errors) logger.error(e.toString())
@@ -143,10 +146,128 @@ class CatsWorklogReporter(connConfig: ConnectionConfig, filter: WorklogFilter)
     )
     val loginFuture = loginReq.get()
     val loginResp = Await.result(loginFuture, reqTimeout)
-    val loginResult = loginResp.json.validate[CatsUser].get
-    val sessionId = loginResult.sessionId.get
-    logger.debug("Current user's session ID: " + sessionId)
-    sessionId
+    loginResp.json.validate[CatsUser] match {
+      case JsSuccess(loginResult, path) =>
+        val loginResult = loginResp.json.validate[CatsUser].get
+        val sessionId = loginResult.sessionId.get
+        logger.debug("Current user's session ID: " + sessionId)
+        sessionId
+      case JsError(errors) =>
+        for (e <- errors) logger.error(e.toString())
+        logger.debug("The body of login response: \n" + loginResp.body)
+        throw new RuntimeException("Login Failed!")
+    }
+  }
+
+  def updateWorklogHours(issueKey: String, worklogDate: LocalDate, hoursSpent: Double): Int = {
+    val worklog = Await.result(
+      cacheManager.listWorklogs(connConfig.baseUriWithSlash, issueKey), Duration(30, SECONDS)
+    ).find(w => w.date == worklogDate)
+    updateWorklogHours(
+      issueKey, worklog.get.id, hoursSpent,
+      worklog.get.date, worklog.get.activityId, worklog.get.orderId, worklog.get.suborderId)
+  }
+
+  def updateWorklogHours(issueKey: String, worklogId: String, hoursSpent: Double,
+                         worklogDate: LocalDate, activityId: String, orderId: String, suborderId: Option[String]): Int = {
+
+    logger.debug(s"Updating the CATS entry on ${worklogDate} for suborder ID: ${suborderId}...")
+    val reqTimeout = Duration(1, MINUTES)
+    val nonce = ZonedDateTime.now()
+    val sessionId = login(reqTimeout, nonce)
+
+    val updateUrl = s"${connConfig.baseUriWithSlash}api/times/${worklogId}"
+    val updateReq = WS.clientUrl(updateUrl)
+      .withHeaders(
+        "Accept-Language" -> "en",
+        "sid" -> sessionId,
+        "Content-Type" -> "application/json; charset=utf-8",
+        "Accept" -> "application/json",
+        "Timestamp" -> nonce.format(TS_FORMATTER),
+        "Consumer-Id" -> connConfig.customerId,
+        "Consumer-Key" -> connConfig.customerKey,
+        "Version" -> "1.0"
+      )
+    //    val updateFuture = updateReq.put(
+    //      f"""
+    //         |  {
+    //         |    "date": "${dateFormatter.format(date)}",
+    //         |    "workingHours": "${hoursSpent}%1.2f",
+    //         |    "comment": "${issueKey}",
+    //         |    "orderid": "${orderId}",
+    //         |    "suborderid": "${suborderId}",
+    //         |    "activityid": "${activityId}",
+    //         |    "standarddescriptionid": null,
+    //         |    "standarddescriptionfrontsystem": null
+    //         |  }
+    //      """.stripMargin)
+
+    val updateFuture = updateReq.put(
+      f"""
+         |  {
+         |    "date": "${dateFormatter.format(worklogDate)}",
+         |    "workingHours": "${hoursSpent}%1.2f",
+         |    "comment": "${issueKey}",
+         |    "activityid": "${activityId}",
+         |    "orderid": "${orderId}",
+         |    "suborderid": "${suborderId.getOrElse("")}"
+         |  }
+      """.stripMargin)
+
+    val updateResp = Await.result(updateFuture, reqTimeout)
+    logger.debug("The update response JSON: " + updateResp.body)
+    updateResp.status
+  }
+
+  def createWorklog(issueKey: String, worklogDate: LocalDate, zone: ZoneId, hoursSpent: Double,
+                    activityId: String, orderId: String, suborderId: Option[String]): Int = {
+
+    logger.debug(s"Creating a CATS entry on ${worklogDate} for suborder ID: ${suborderId}...")
+    val reqTimeout = Duration(1, MINUTES)
+    val nonce = ZonedDateTime.now()
+    val sessionId = login(reqTimeout, nonce)
+
+    val createUrl = s"${connConfig.baseUriWithSlash}api/times"
+    val createReq = WS.clientUrl(createUrl)
+      .withHeaders(
+        "Accept-Language" -> "en",
+        "sid" -> sessionId,
+        "Content-Type" -> "application/json; charset=utf-8",
+        "Accept" -> "application/json",
+        "Timestamp" -> nonce.format(TS_FORMATTER),
+        "Consumer-Id" -> connConfig.customerId,
+        "Consumer-Key" -> connConfig.customerKey,
+        "Version" -> "1.0"
+      )
+    //    val updateFuture = updateReq.put(
+    //      f"""
+    //         |  {
+    //         |    "date": "${dateFormatter.format(date)}",
+    //         |    "workingHours": "${hoursSpent}%1.2f",
+    //         |    "comment": "${issueKey}",
+    //         |    "orderid": "${orderId}",
+    //         |    "suborderid": "${suborderId}",
+    //         |    "activityid": "${activityId}",
+    //         |    "standarddescriptionid": null,
+    //         |    "standarddescriptionfrontsystem": null
+    //         |  }
+    //      """.stripMargin)
+
+    val createFuture = createReq.post(
+      f"""
+         |  {
+         |    "date": "${dateFormatter.format(worklogDate.atStartOfDay(zone).plusHours(12))}",
+         |    "workingHours": "${hoursSpent}%1.2f",
+         |    "comment": "${issueKey}",
+         |    "activityid": "${activityId}",
+         |    "orderid": "${orderId}",
+         |    "suborderid": "${suborderId.getOrElse("")}"
+         |  }
+      """.stripMargin)
+
+    val createResp = Await.result(createFuture, reqTimeout)
+    logger.debug("The creation response JSON: " + createResp.body)
+    createResp.status
   }
 
   def toWorklogEntries(worklogsMap: util.Map[CatsWorklog, BasicIssue]): Seq[WorklogEntry] = {
@@ -179,61 +300,10 @@ class CatsWorklogReporter(connConfig: ConnectionConfig, filter: WorklogFilter)
     val myWorklogs: util.List[CatsWorklog] = synchronizedList(new util.LinkedList)
 
     val baseUrlOption = Option(connConfig.baseUriWithSlash)
-    for (worklog  <- searchResult.times.map(_.copy(baseUrl = baseUrlOption)).par) {
-       myWorklogs.add(worklog)
-       worklogsMap.put(worklog, worklog.comment)
+    for (worklog <- searchResult.times.map(_.copy(baseUrl = baseUrlOption)).par) {
+      myWorklogs.add(worklog)
+      worklogsMap.put(worklog, worklog.comment)
     }
     return worklogsMap
   }
-
-//  private def retrieveWorklogsFromRestAPI(issue: BasicIssue, username: String, password: String): ParSeq[CatsWorklog] = {
-//
-//    val worklogsUrl = s"${connConfig.baseUriWithSlash}rest/api/2/issue/${issue.key}/worklog"
-//    val reqTimeout = Duration(2, MINUTES)
-//    val worklogsReq = WS.clientUrl(worklogsUrl)
-//                    .withAuth(connConfig.username, connConfig.password, BASIC)
-//                    .withHeaders("Content-Type" -> "application/json")
-//                    .withQueryString("maxResults" -> "1000")
-//    val respFuture = worklogsReq.get()
-//    val resp = Await.result(respFuture, reqTimeout)
-//
-//    resp.json.validate[IssueWorklogs] match {
-//      case JsSuccess(issueWorklogs, path) =>
-//        val baseUrl = connConfig.baseUriWithSlash
-//        val enhancedWorklogs = issueWorklogs.worklogs.map(_.map(w => w.copy(
-//            issueKey = Option(issue.key), baseUrl = Option(baseUrl)
-//        )))
-//        val enhancedIssueWorklogs = issueWorklogs.copy(
-//          baseUrl = Option(baseUrl), issueKey = Option(issue.key), worklogs = enhancedWorklogs
-//        )
-//        cacheManager.updateIssueWorklogs(enhancedIssueWorklogs) onSuccess {
-//          case lastError => if (lastError.ok)
-//            cacheManager.updateIssue(issue)
-//        }
-//        return (enhancedIssueWorklogs.worklogs getOrElse immutable.Seq.empty).par
-//      case JsError(errors) =>
-//        for (e <- errors) logger.error(e.toString())
-//        logger.debug("The body of search response: \n" + resp.body)
-//        throw new RuntimeException("Retrieving Worklogs Failed!")
-//    }
-//  }
-//
-//  def isLoggedBy(username: String, worklog: CatsWorklog): Boolean = {
-//    worklog.author.name.equalsIgnoreCase(username)
-//  }
-//
-//  def isWithinPeriod(fromDate: LocalDate, toDate: LocalDate, worklog: CatsWorklog): Boolean = {
-//    val startDate = worklog.started.atStartOfDay(zoneId).toLocalDate
-//    startDate.isEqual(fromDate) || startDate.isEqual(toDate) ||
-//      (startDate.isAfter(fromDate) && startDate.isBefore(toDate))
-//  }
-//
-//  def toFuzzyDuration(totalMinutes: Int): String = {
-//    val hours = totalMinutes / 60
-//    val minutes = totalMinutes % 60
-//    if (minutes == 0)
-//      s"$hours h"
-//    else
-//      s"$hours h, $minutes m"
-//  }
 }

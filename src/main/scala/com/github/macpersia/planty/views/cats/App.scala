@@ -2,7 +2,7 @@ package com.github.macpersia.planty.views.cats
 
 import java.io.{File, FileNotFoundException}
 import java.net.{URI, URISyntaxException}
-import java.time.LocalDate
+import java.time.{LocalDate, ZoneId}
 import java.util.TimeZone
 
 import com.github.macpersia.planty.views.cats.CatsWorklogReporter._
@@ -46,7 +46,20 @@ object App extends LazyLogging {
           params.author, params.fromDate, params.toDate, params.timeZone)
 
         for (reporter <- managed(new CatsWorklogReporter(connConfig, filter)(global))) {
-          reporter.printWorklogsAsCsv(params.outputFile)
+
+//           reporter.printWorklogsAsCsv(params.outputFile)
+
+          val issueKey = "BICM-3192"
+          val worklogId = "000008045801"
+          val hoursSpent = 2.0
+          val date = LocalDate.of(2016, 7, 19)
+          val activityId = "34040"
+          val orderId = "KI528801"
+          val suborderId = "KI528801-0130"
+          // reporter.updateWorklogHours(issueKey, worklogId, hoursSpent, date, activityId, orderId, suborderId)
+          // reporter.updateWorklogHours(issueKey, date, hoursSpent)
+          reporter.createWorklog(issueKey, date, ZoneId.systemDefault(), hoursSpent, activityId, orderId, Option(suborderId))
+
           sys.exit(0)
         }
       }
