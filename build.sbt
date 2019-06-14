@@ -1,4 +1,4 @@
-name := "planty-cats-view"
+name := "planty-worklogs-adapter-cats"
 
 version := "1.0-SNAPSHOT"
 
